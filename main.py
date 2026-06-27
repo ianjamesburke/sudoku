@@ -113,7 +113,7 @@ def _errors(board, solution, given):
                 out[r][c] = True
     return out
 
-def _complete(board, given, solution):
+def _complete(board, _given, solution):
     for r in range(9):
         for c in range(9):
             if board[r][c] != solution[r][c]:
@@ -196,8 +196,7 @@ def _enter_number(d, num):
 
 # ── Lifecycle ─────────────────────────────────────────────────────────────
 
-def init(size, args):
-    d = _load()
+def init(_size, _args):
     missing = {k: v for k, v in _blank().items() if state.get(k) is None}
     effects = [
         SetTitle("Sudoku"),
@@ -328,8 +327,6 @@ def _game_key(d, event):
 
     board = [list(row) for row in d.get("board", [[0] * 9] * 9)]
     solution = d.get("solution", [[0] * 9] * 9)
-    notes = [[list(cell) for cell in row] for row in d.get("notes", [[[False]*9]*9]*9)]
-
     if key in ("backspace", "delete"):
         board[sel_r][sel_c] = 0
         return [SetState({"board": board, "errors": _errors(board, solution, given), "sel_num": 0})]
