@@ -11,7 +11,10 @@ from plexi_sdk import dim, rgba, state, theme
 TRANSPARENT = rgba(0, 0, 0, 0)
 from plexi_sdk.effects import SetState, SetStatus, SetTimer, SetTitle
 from plexi_sdk.events import KeyEvent, MouseEvent, Resize, TimerFired
-from plexi_sdk.ui import AppBar, Canvas, CanvasRect, CanvasText, Column, FooterKeys
+from plexi_sdk.ui import (
+    AppBar, Canvas, CanvasRect, CanvasText, Column, Divider,
+    FooterKeys, HStack, Section, Sized, Text,
+)
 
 TIMER_ID = 1
 CLUES = {"easy": 46, "medium": 34, "hard": 26}
@@ -126,14 +129,6 @@ def _fmt(secs):
 
 # ── Grid layout ────────────────────────────────────────────────────────────
 
-def _metrics():
-    side = 130.0
-    pad = 48.0
-    cell = min((sdk.canvas_width - side - pad) / 9, (sdk.canvas_height - pad) / 9)
-    ox = (sdk.canvas_width - side - cell * 9) / 2
-    oy = (sdk.canvas_height - cell * 9) / 2
-    return cell, ox, oy
-
 def _count_numbers(board):
     counts = [0] * 9
     for r in range(9):
@@ -142,23 +137,6 @@ def _count_numbers(board):
             if 1 <= v <= 9:
                 counts[v - 1] += 1
     return counts
-
-def _num_btn_layout(cell, ox, oy):
-    gw = cell * 9
-    px = ox + gw + 18.0
-    py = oy + 8.0
-    bw, bh = 26.0, 26.0
-    gap = 4.0
-    ny_start = py + 175.0
-    positions = []
-    for i in range(9):
-        num = i + 1
-        col = i % 3
-        row = i // 3
-        bx = px + col * (bw + gap)
-        by = ny_start + row * (bh + gap)
-        positions.append((num, bx, by, bw, bh))
-    return positions
 
 def _enter_number(d, num):
     sel_r = int(d.get("sel_r", -1))
@@ -350,19 +328,21 @@ def view():
     else:
         keys = [("1-9", "fill"), ("n", "notes"), ("p", "pause"), ("r", "restart"), ("m", "menu")]
         footer = FooterKeys(keys)
+    screen = str(d.get("screen", "menu"))
+    if screen != "menu":
+        body = HStack([
+            Canvas(_draw_grid(d), grow=True),
+            Sized(width=148, child=_sidebar(d)),
+        ], grow=True)
+    else:
+        body = Canvas(_draw_menu(d), grow=True)
+
     return Column([
         AppBar("Sudoku"),
-        Canvas(_draw(d), width=sdk.canvas_width, height=100.0, grow=True),
+        body,
         footer,
     ], padding=0, gap=0, grow=True)
 
-def _draw(d):
-    if sdk.canvas_width <= 0 or sdk.canvas_height <= 0:
-        return []
-    screen = str(d.get("screen", "menu"))
-    if screen == "menu":
-        return _draw_menu(d)
-    return _draw_game(d)
 
 # ── Menu drawing ───────────────────────────────────────────────────────────
 
@@ -398,7 +378,8 @@ def _draw_menu(d):
 
 # ── Game drawing ───────────────────────────────────────────────────────────
 
-def _draw_game(d):
+def _draw_grid(d):
+    """Canvas commands for the sudoku grid only (no sidebar)."""
     board = d.get("board", [[0] * 9] * 9)
     given = d.get("given", [[True] * 9] * 9)
     errors = d.get("errors", [[False] * 9] * 9)
@@ -408,12 +389,12 @@ def _draw_game(d):
     paused = bool(d.get("paused", False))
     complete = bool(d.get("complete", False))
     screen = str(d.get("screen", "game"))
-    notes_mode = bool(d.get("notes_mode", False))
-    difficulty = str(d.get("difficulty", "easy"))
     seconds = int(d.get("seconds", 0))
     sel_num = int(d.get("sel_num", 0))
 
-    cell, ox, oy = _metrics()
+    cell = min(sdk.canvas_width / 9, sdk.canvas_height / 9)
+    ox = (sdk.canvas_width - cell * 9) / 2
+    oy = (sdk.canvas_height - cell * 9) / 2
     gw = cell * 9
     gh = cell * 9
     cmds = []
@@ -422,7 +403,7 @@ def _draw_game(d):
     cmds.append(CanvasRect(ox - 3, oy - 3, gw + 6, gh + 6, theme.bg_darkest, radius=6.0))
     cmds.append(CanvasRect(ox, oy, gw, gh, theme.bg, radius=4.0))
 
-    # Transparent per-cell hit regions — host maps clicks to `cell-r-c`.
+    # Per-cell hit regions
     for r in range(9):
         for c in range(9):
             cmds.append(CanvasRect(ox + c * cell, oy + r * cell, cell, cell,
@@ -435,7 +416,7 @@ def _draw_game(d):
         br, bc = (sel_r // 3) * 3, (sel_c // 3) * 3
         cmds.append(CanvasRect(ox + bc * cell, oy + br * cell, cell * 3, cell * 3, theme.border))
 
-    # Same-number highlight (driven by sel_num — set by clicking a cell or a number button)
+    # Same-number highlight
     if sel_num != 0 and not paused:
         for r in range(9):
             for c in range(9):
@@ -464,7 +445,6 @@ def _draw_game(d):
                         col, bold = theme.accent, False
                     cmds.append(CanvasText(cx, cy, str(val), size=cell * 0.52, color=col, bold=bold, align="center_center"))
                 else:
-                    # Pencil marks
                     cell_notes = notes[r][c]
                     mini = cell / 3.2
                     for ni in range(9):
@@ -482,61 +462,12 @@ def _draw_game(d):
         cmds.append(CanvasRect(ox, oy + i * cell - lw / 2, gw, lw, col))
         cmds.append(CanvasRect(ox + i * cell - lw / 2, oy, lw, gh, col))
 
-    # Box outline drawn on top of grid lines
+    # Box outline on top
     if sel_r >= 0 and sel_c >= 0 and not paused and screen == "game":
         br, bc = (sel_r // 3) * 3, (sel_c // 3) * 3
         bs = cell * 3
         cmds.append(CanvasRect(ox + bc * cell, oy + br * cell, bs, bs, TRANSPARENT,
                                border_color=theme.muted, border_width=2.0))
-
-    # Side panel
-    px = ox + gw + 18.0
-    py = oy + 8.0
-
-    d_color = getattr(theme, DIFF_TONE.get(difficulty, "accent"))
-
-    cmds += [
-        CanvasText(px, py, "DIFFICULTY", size=9.0, color=theme.muted),
-        CanvasText(px, py + 15.0, difficulty.upper(), size=15.0, color=d_color, bold=True),
-        CanvasText(px, py + 50.0, "TIME", size=9.0, color=theme.muted),
-        CanvasText(px, py + 65.0, _fmt(seconds), size=20.0, color=theme.fg, bold=True),
-    ]
-
-    if notes_mode:
-        cmds.append(CanvasRect(px - 4, py + 100.0, 90.0, 22.0, theme.surface, radius=4.0))
-        cmds.append(CanvasText(px + 41.0, py + 111.0, "NOTES ON", size=10.0, color=theme.warning, bold=True, align="center_center"))
-
-    # Clues remaining hint
-    filled = sum(1 for r in range(9) for c in range(9) if not given[r][c] and board[r][c] != 0)
-    blanks = sum(1 for r in range(9) for c in range(9) if not given[r][c])
-    if blanks > 0:
-        cmds += [
-            CanvasText(px, py + 135.0, "PROGRESS", size=9.0, color=theme.muted),
-            CanvasText(px, py + 150.0, f"{filled}/{blanks}", size=13.0, color=theme.accent),
-        ]
-
-    # Number buttons 1-9
-    counts = _count_numbers(board)
-    cmds.append(CanvasText(px, py + 163.0, "NUMBERS", size=9.0, color=theme.muted))
-    for num, bx, by, bw, bh in _num_btn_layout(cell, ox, oy):
-        done_num = counts[num - 1] >= 9
-        is_sel = num == sel_num and sel_num != 0
-        if done_num:
-            bg = theme.bg
-            text_col = theme.muted
-            border = theme.border
-        elif is_sel:
-            bg = theme.highlight
-            text_col = theme.accent
-            border = theme.accent
-        else:
-            bg = theme.surface
-            text_col = theme.fg
-            border = theme.highlight
-        cmds.append(CanvasRect(bx, by, bw, bh, bg, radius=4.0,
-                               border_color=border, border_width=1.0,
-                               hit_region=f"num-{num}"))
-        cmds.append(CanvasText(bx + bw / 2, by + bh / 2, str(num), size=13.0, color=text_col, bold=not done_num, align="center_center"))
 
     # Overlay: paused
     cxg = ox + gw / 2
@@ -558,3 +489,69 @@ def _draw_game(d):
         ]
 
     return cmds
+
+
+def _numpad_canvas(d):
+    """3x3 numpad as a small canvas with hit regions."""
+    board = d.get("board", [[0] * 9] * 9)
+    sel_num = int(d.get("sel_num", 0))
+    counts = _count_numbers(board)
+    bw, bh, gap = 38.0, 38.0, 6.0
+    cmds = []
+    for i in range(9):
+        num = i + 1
+        col = i % 3
+        row = i // 3
+        bx = col * (bw + gap)
+        by = row * (bh + gap)
+        done_num = counts[num - 1] >= 9
+        is_sel = num == sel_num and sel_num != 0
+        if done_num:
+            bg, text_col, border = theme.bg, theme.muted, theme.border
+        elif is_sel:
+            bg, text_col, border = theme.highlight, theme.accent, theme.accent
+        else:
+            bg, text_col, border = theme.surface, theme.fg, theme.highlight
+        cmds.append(CanvasRect(bx, by, bw, bh, bg, radius=4.0,
+                               border_color=border, border_width=1.0,
+                               hit_region=f"num-{num}"))
+        cmds.append(CanvasText(bx + bw / 2, by + bh / 2, str(num), size=15.0,
+                               color=text_col, bold=not done_num, align="center_center"))
+    total_w = 3 * bw + 2 * gap
+    total_h = 3 * bh + 2 * gap
+    return Canvas(cmds, width=total_w, height=total_h)
+
+
+def _sidebar(d):
+    """L1 Column sidebar: difficulty, timer, progress, numpad."""
+    difficulty = str(d.get("difficulty", "easy"))
+    seconds = int(d.get("seconds", 0))
+    notes_mode = bool(d.get("notes_mode", False))
+    board = d.get("board", [[0] * 9] * 9)
+    given = d.get("given", [[True] * 9] * 9)
+
+    filled = sum(1 for r in range(9) for c in range(9) if not given[r][c] and board[r][c] != 0)
+    blanks = sum(1 for r in range(9) for c in range(9) if not given[r][c])
+    d_color = getattr(theme, DIFF_TONE.get(difficulty, "accent"))
+
+    children = [
+        Section("DIFFICULTY"),
+        Text(difficulty.upper(), color=d_color, bold=True, size=15),
+        Divider(),
+        Section("TIME"),
+        Text(_fmt(seconds), bold=True, size=20),
+    ]
+    if notes_mode:
+        children += [Divider(), Text("NOTES ON", color=theme.warning, bold=True)]
+    if blanks > 0:
+        children += [
+            Divider(),
+            Section("PROGRESS"),
+            Text(f"{filled}/{blanks}", color=theme.accent, size=13),
+        ]
+    children += [
+        Divider(),
+        Section("NUMBERS"),
+        _numpad_canvas(d),
+    ]
+    return Column(children, padding=12, gap=6)
