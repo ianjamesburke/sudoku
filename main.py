@@ -6,29 +6,17 @@ from __future__ import annotations
 import random
 
 import plexi_sdk as sdk
-from plexi_sdk import log, state
-from plexi_sdk.effects import SetMouseTracking, SetState, SetStatus, SetTimer, SetTitle
+from plexi_sdk import dim, rgba, state, theme
+
+TRANSPARENT = rgba(0, 0, 0, 0)
+from plexi_sdk.effects import SetState, SetStatus, SetTimer, SetTitle
 from plexi_sdk.events import KeyEvent, MouseEvent, Resize, TimerFired
 from plexi_sdk.ui import AppBar, Canvas, CanvasRect, CanvasText, Column, FooterKeys
 
 TIMER_ID = 1
 CLUES = {"easy": 46, "medium": 34, "hard": 26}
 DIFFICULTIES = ["easy", "medium", "hard"]
-
-C_BG = "#181825"
-C_SURFACE = "#1e1e2e"
-C_GRID = "#45475a"
-C_BOX = "#cdd6f4"
-C_GIVEN = "#cdd6f4"
-C_USER = "#89b4fa"
-C_ERROR = "#f38ba8"
-C_SEL = "#45475a"
-C_ROW = "#2a2a3d"
-C_BOX_HL = "#2a2a40"
-C_MUTED = "#6c7086"
-C_ACCENT = "#cba6f7"
-C_WIN = "#a6e3a1"
-C_NOTE = "#585b70"
+DIFF_TONE = {"easy": "success", "medium": "warning", "hard": "danger"}
 
 # ── Sudoku generation ──────────────────────────────────────────────────────
 
@@ -146,14 +134,6 @@ def _metrics():
     oy = (sdk.canvas_height - cell * 9) / 2
     return cell, ox, oy
 
-def _hit(x, y):
-    cell, ox, oy = _metrics()
-    gx = x - ox
-    gy = y - oy
-    if gx < 0 or gx >= cell * 9 or gy < 0 or gy >= cell * 9:
-        return -1, -1
-    return max(0, min(8, int(gy / cell))), max(0, min(8, int(gx / cell)))
-
 def _count_numbers(board):
     counts = [0] * 9
     for r in range(9):
@@ -222,7 +202,6 @@ def init(size, args):
     effects = [
         SetTitle("Sudoku"),
         SetStatus("Choose difficulty"),
-        SetMouseTracking(True),
         SetTimer(TIMER_ID, 1000, repeat=True),
     ]
     if missing:
@@ -243,7 +222,7 @@ def update(event):
         return []
 
     if isinstance(event, MouseEvent) and event.pressed:
-        return _mouse(d, event.x, event.y)
+        return _mouse(d, event.region)
 
     if isinstance(event, KeyEvent) and event.pressed:
         return _key(d, event)
@@ -252,31 +231,20 @@ def update(event):
 
 # ── Input handlers ─────────────────────────────────────────────────────────
 
-def _mouse(d, x, y):
+def _mouse(d, region):
+    if not region:
+        return []
     if str(d.get("screen")) != "game":
-        return _menu_mouse(d, x, y)
-    cell, ox, oy = _metrics()
-    for num, bx, by, bw, bh in _num_btn_layout(cell, ox, oy):
-        if bx <= x <= bx + bw and by <= y <= by + bh:
-            return _enter_number(d, num)
-    r, c = _hit(x, y)
-    if r >= 0:
+        if region.startswith("diff-"):
+            diff = DIFFICULTIES[int(region[5:])]
+            return [SetState(_new_game(diff)), SetStatus(f"{diff.title()} — 00:00")]
+        return []
+    if region.startswith("num-"):
+        return _enter_number(d, int(region[4:]))
+    if region.startswith("cell-"):
+        r, c = (int(v) for v in region[5:].split("-"))
         board = d.get("board", [[0] * 9] * 9)
         return [SetState({"sel_r": r, "sel_c": c, "sel_num": board[r][c]})]
-    return []
-
-def _menu_mouse(d, x, y):
-    # Three difficulty boxes drawn in view — calculate which was clicked
-    w = sdk.canvas_width
-    h = sdk.canvas_height
-    bw, bh = 200.0, 60.0
-    bx = (w - bw) / 2
-    by_start = h / 2 - 80.0
-    for i, diff in enumerate(DIFFICULTIES):
-        by = by_start + i * 80.0
-        if bx <= x <= bx + bw and by <= y <= by + bh:
-            new = _new_game(diff)
-            return [SetState(new), SetStatus(f"{diff.title()} — 00:00")]
     return []
 
 def _key(d, event):
@@ -408,25 +376,26 @@ def _draw_menu(d):
     cmds = []
 
     title_y = h / 2 - 160.0
-    cmds.append(CanvasText(w / 2, title_y, "SUDOKU", size=36.0, color=C_BOX, bold=True, align="center_center"))
-    cmds.append(CanvasText(w / 2, title_y + 40.0, "Choose your difficulty", size=13.0, color=C_MUTED, align="center_center"))
+    cmds.append(CanvasText(w / 2, title_y, "SUDOKU", size=36.0, color=theme.fg, bold=True, align="center_center"))
+    cmds.append(CanvasText(w / 2, title_y + 40.0, "Choose your difficulty", size=13.0, color=theme.muted, align="center_center"))
 
     bw, bh = 220.0, 64.0
     bx = (w - bw) / 2
     by_start = h / 2 - 80.0
     labels = [("Easy", f"{CLUES['easy']} clues"), ("Medium", f"{CLUES['medium']} clues"), ("Hard", f"{CLUES['hard']} clues")]
-    colors_diff = ["#a6e3a1", "#f9e2af", "#f38ba8"]
+    tones = [theme.success, theme.warning, theme.danger]
 
     for i, (label, subtitle) in enumerate(labels):
         by = by_start + i * 80.0
         selected = i == diff_idx
-        bg = "#313244" if selected else "#1e1e2e"
-        border = colors_diff[i] if selected else "#45475a"
-        cmds.append(CanvasRect(bx - 2, by - 2, bw + 4, bh + 4, border, radius=10.0))
-        cmds.append(CanvasRect(bx, by, bw, bh, bg, radius=8.0))
-        text_color = colors_diff[i] if selected else C_BOX
+        bg = theme.surface if selected else theme.bg
+        border = tones[i] if selected else theme.highlight
+        cmds.append(CanvasRect(bx, by, bw, bh, bg, radius=8.0,
+                               border_color=border, border_width=2.0,
+                               hit_region=f"diff-{i}"))
+        text_color = tones[i] if selected else theme.fg
         cmds.append(CanvasText(bx + bw / 2, by + 22.0, label, size=17.0, color=text_color, bold=selected, align="center_center"))
-        cmds.append(CanvasText(bx + bw / 2, by + 44.0, subtitle, size=11.0, color=C_MUTED, align="center_center"))
+        cmds.append(CanvasText(bx + bw / 2, by + 44.0, subtitle, size=11.0, color=theme.muted, align="center_center"))
 
     return cmds
 
@@ -453,26 +422,32 @@ def _draw_game(d):
     cmds = []
 
     # Grid shadow/bg
-    cmds.append(CanvasRect(ox - 3, oy - 3, gw + 6, gh + 6, "#11111b", radius=6.0))
-    cmds.append(CanvasRect(ox, oy, gw, gh, C_BG, radius=4.0))
+    cmds.append(CanvasRect(ox - 3, oy - 3, gw + 6, gh + 6, theme.bg_darkest, radius=6.0))
+    cmds.append(CanvasRect(ox, oy, gw, gh, theme.bg, radius=4.0))
+
+    # Transparent per-cell hit regions — host maps clicks to `cell-r-c`.
+    for r in range(9):
+        for c in range(9):
+            cmds.append(CanvasRect(ox + c * cell, oy + r * cell, cell, cell,
+                                   TRANSPARENT, hit_region=f"cell-{r}-{c}"))
 
     # Highlight row, col, box of selected cell
     if sel_r >= 0 and sel_c >= 0 and not paused and screen == "game":
-        cmds.append(CanvasRect(ox, oy + sel_r * cell, gw, cell, C_ROW))
-        cmds.append(CanvasRect(ox + sel_c * cell, oy, cell, gh, C_ROW))
+        cmds.append(CanvasRect(ox, oy + sel_r * cell, gw, cell, theme.border))
+        cmds.append(CanvasRect(ox + sel_c * cell, oy, cell, gh, theme.border))
         br, bc = (sel_r // 3) * 3, (sel_c // 3) * 3
-        cmds.append(CanvasRect(ox + bc * cell, oy + br * cell, cell * 3, cell * 3, C_BOX_HL))
+        cmds.append(CanvasRect(ox + bc * cell, oy + br * cell, cell * 3, cell * 3, theme.border))
 
     # Same-number highlight (driven by sel_num — set by clicking a cell or a number button)
     if sel_num != 0 and not paused:
         for r in range(9):
             for c in range(9):
                 if board[r][c] == sel_num and not (r == sel_r and c == sel_c):
-                    cmds.append(CanvasRect(ox + c * cell + 2, oy + r * cell + 2, cell - 4, cell - 4, "#3d3a52", radius=3.0))
+                    cmds.append(CanvasRect(ox + c * cell + 2, oy + r * cell + 2, cell - 4, cell - 4, theme.surface, radius=3.0))
 
     # Selected cell highlight
     if sel_r >= 0 and sel_c >= 0 and not paused and screen == "game":
-        cmds.append(CanvasRect(ox + sel_c * cell + 1, oy + sel_r * cell + 1, cell - 2, cell - 2, C_SEL, radius=3.0))
+        cmds.append(CanvasRect(ox + sel_c * cell + 1, oy + sel_r * cell + 1, cell - 2, cell - 2, theme.highlight, radius=3.0))
 
     # Cell content
     if not paused:
@@ -483,13 +458,13 @@ def _draw_game(d):
                 val = board[r][c]
                 if val != 0:
                     if given[r][c]:
-                        col, bold = C_GIVEN, True
+                        col, bold = theme.fg, True
                     elif errors[r][c]:
-                        col, bold = C_ERROR, False
+                        col, bold = theme.danger, False
                     elif complete:
-                        col, bold = C_WIN, False
+                        col, bold = theme.success, False
                     else:
-                        col, bold = C_USER, False
+                        col, bold = theme.accent, False
                     cmds.append(CanvasText(cx, cy, str(val), size=cell * 0.52, color=col, bold=bold, align="center_center"))
                 else:
                     # Pencil marks
@@ -500,94 +475,89 @@ def _draw_game(d):
                             nr2, nc2 = divmod(ni, 3)
                             nx = ox + c * cell + nc2 * (cell / 3) + cell / 6
                             ny = oy + r * cell + nr2 * (cell / 3) + cell / 6
-                            cmds.append(CanvasText(nx, ny, str(ni + 1), size=max(7.0, mini * 0.6), color=C_NOTE, align="center_center"))
+                            cmds.append(CanvasText(nx, ny, str(ni + 1), size=max(7.0, mini * 0.6), color=theme.muted, align="center_center"))
 
     # Grid lines
     for i in range(10):
         box_line = i % 3 == 0
         lw = 2.0 if box_line else 0.5
-        col = C_BOX if box_line else C_GRID
+        col = theme.fg if box_line else theme.highlight
         cmds.append(CanvasRect(ox, oy + i * cell - lw / 2, gw, lw, col))
         cmds.append(CanvasRect(ox + i * cell - lw / 2, oy, lw, gh, col))
 
     # Box outline drawn on top of grid lines
     if sel_r >= 0 and sel_c >= 0 and not paused and screen == "game":
         br, bc = (sel_r // 3) * 3, (sel_c // 3) * 3
-        bx0 = ox + bc * cell
-        by0 = oy + br * cell
         bs = cell * 3
-        lw = 2.0
-        c_bord = "#7c7a9a"
-        cmds.append(CanvasRect(bx0 - lw, by0 - lw, bs + lw * 2, lw, c_bord))  # top
-        cmds.append(CanvasRect(bx0 - lw, by0 + bs, bs + lw * 2, lw, c_bord))  # bottom
-        cmds.append(CanvasRect(bx0 - lw, by0 - lw, lw, bs + lw * 2, c_bord))  # left
-        cmds.append(CanvasRect(bx0 + bs, by0 - lw, lw, bs + lw * 2, c_bord))  # right
+        cmds.append(CanvasRect(ox + bc * cell, oy + br * cell, bs, bs, TRANSPARENT,
+                               border_color=theme.muted, border_width=2.0))
 
     # Side panel
     px = ox + gw + 18.0
     py = oy + 8.0
 
-    diff_colors = {"easy": "#a6e3a1", "medium": "#f9e2af", "hard": "#f38ba8"}
-    d_color = diff_colors.get(difficulty, C_ACCENT)
+    d_color = getattr(theme, DIFF_TONE.get(difficulty, "accent"))
 
     cmds += [
-        CanvasText(px, py, "DIFFICULTY", size=9.0, color=C_MUTED),
+        CanvasText(px, py, "DIFFICULTY", size=9.0, color=theme.muted),
         CanvasText(px, py + 15.0, difficulty.upper(), size=15.0, color=d_color, bold=True),
-        CanvasText(px, py + 50.0, "TIME", size=9.0, color=C_MUTED),
-        CanvasText(px, py + 65.0, _fmt(seconds), size=20.0, color=C_BOX, bold=True),
+        CanvasText(px, py + 50.0, "TIME", size=9.0, color=theme.muted),
+        CanvasText(px, py + 65.0, _fmt(seconds), size=20.0, color=theme.fg, bold=True),
     ]
 
     if notes_mode:
-        cmds.append(CanvasRect(px - 4, py + 100.0, 90.0, 22.0, "#2a2a1a", radius=4.0))
-        cmds.append(CanvasText(px + 41.0, py + 111.0, "NOTES ON", size=10.0, color="#f9e2af", bold=True, align="center_center"))
+        cmds.append(CanvasRect(px - 4, py + 100.0, 90.0, 22.0, theme.surface, radius=4.0))
+        cmds.append(CanvasText(px + 41.0, py + 111.0, "NOTES ON", size=10.0, color=theme.warning, bold=True, align="center_center"))
 
     # Clues remaining hint
     filled = sum(1 for r in range(9) for c in range(9) if not given[r][c] and board[r][c] != 0)
     blanks = sum(1 for r in range(9) for c in range(9) if not given[r][c])
     if blanks > 0:
         cmds += [
-            CanvasText(px, py + 135.0, "PROGRESS", size=9.0, color=C_MUTED),
-            CanvasText(px, py + 150.0, f"{filled}/{blanks}", size=13.0, color=C_USER),
+            CanvasText(px, py + 135.0, "PROGRESS", size=9.0, color=theme.muted),
+            CanvasText(px, py + 150.0, f"{filled}/{blanks}", size=13.0, color=theme.accent),
         ]
 
     # Number buttons 1-9
     counts = _count_numbers(board)
-    cmds.append(CanvasText(px, py + 167.0, "NUMBERS", size=9.0, color=C_MUTED))
+    cmds.append(CanvasText(px, py + 167.0, "NUMBERS", size=9.0, color=theme.muted))
     for num, bx, by, bw, bh in _num_btn_layout(cell, ox, oy):
         done_num = counts[num - 1] >= 9
         is_sel = num == sel_num and sel_num != 0
         if done_num:
-            bg = "#1a1a2a"
-            text_col = "#3a3a50"
-            border = "#2a2a3a"
+            bg = theme.bg
+            text_col = theme.muted
+            border = theme.border
         elif is_sel:
-            bg = "#3d3a52"
-            text_col = C_ACCENT
-            border = C_ACCENT
+            bg = theme.highlight
+            text_col = theme.accent
+            border = theme.accent
         else:
-            bg = "#252535"
-            text_col = C_BOX
-            border = C_GRID
-        cmds.append(CanvasRect(bx - 1, by - 1, bw + 2, bh + 2, border, radius=5.0))
-        cmds.append(CanvasRect(bx, by, bw, bh, bg, radius=4.0))
+            bg = theme.surface
+            text_col = theme.fg
+            border = theme.highlight
+        cmds.append(CanvasRect(bx, by, bw, bh, bg, radius=4.0,
+                               border_color=border, border_width=1.0,
+                               hit_region=f"num-{num}"))
         cmds.append(CanvasText(bx + bw / 2, by + bh / 2, str(num), size=13.0, color=text_col, bold=not done_num, align="center_center"))
 
     # Overlay: paused
     cxg = ox + gw / 2
     cyg = oy + gh / 2
+    scrim = dim(theme.bg_darkest, 238)
     if paused:
         cmds += [
-            CanvasRect(cxg - 90, cyg - 32, 180, 64, "#000000ee", radius=8.0),
-            CanvasText(cxg, cyg, "PAUSED", size=22.0, color="#f9e2af", bold=True, align="center_center"),
+            CanvasRect(cxg - 90, cyg - 32, 180, 64, scrim, radius=8.0),
+            CanvasText(cxg, cyg, "PAUSED", size=22.0, color=theme.warning, bold=True, align="center_center"),
         ]
 
     # Overlay: win
     if screen == "win":
         cmds += [
-            CanvasRect(cxg - 120, cyg - 50, 240, 100, "#000000ee", radius=10.0),
-            CanvasText(cxg, cyg - 18, "PUZZLE SOLVED!", size=20.0, color=C_WIN, bold=True, align="center_center"),
-            CanvasText(cxg, cyg + 12, _fmt(seconds), size=16.0, color=C_BOX, align="center_center"),
-            CanvasText(cxg, cyg + 34, "press R for new game", size=11.0, color=C_MUTED, align="center_center"),
+            CanvasRect(cxg - 120, cyg - 50, 240, 100, scrim, radius=10.0),
+            CanvasText(cxg, cyg - 18, "PUZZLE SOLVED!", size=20.0, color=theme.success, bold=True, align="center_center"),
+            CanvasText(cxg, cyg + 12, _fmt(seconds), size=16.0, color=theme.fg, align="center_center"),
+            CanvasText(cxg, cyg + 34, "press R for new game", size=11.0, color=theme.muted, align="center_center"),
         ]
 
     return cmds
