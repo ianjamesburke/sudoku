@@ -517,7 +517,7 @@ def _draw_game(d):
 
     # Number buttons 1-9
     counts = _count_numbers(board)
-    cmds.append(CanvasText(px, py + 159.0, "NUMBERS", size=9.0, color=theme.muted))
+    cmds.append(CanvasText(px, py + 163.0, "NUMBERS", size=9.0, color=theme.muted))
     for num, bx, by, bw, bh in _num_btn_layout(cell, ox, oy):
         done_num = counts[num - 1] >= 9
         is_sel = num == sel_num and sel_num != 0
