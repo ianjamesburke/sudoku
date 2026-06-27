@@ -17,6 +17,7 @@ from plexi_sdk.ui import (
 )
 
 TIMER_ID = 1
+SIDEBAR_W = 148
 CLUES = {"easy": 46, "medium": 34, "hard": 26}
 DIFFICULTIES = ["easy", "medium", "hard"]
 DIFF_TONE = {"easy": "success", "medium": "warning", "hard": "danger"}
@@ -332,7 +333,7 @@ def view():
     if screen != "menu":
         body = HStack([
             Canvas(_draw_grid(d), grow=True),
-            Sized(width=148, child=_sidebar(d)),
+            Sized(width=SIDEBAR_W, child=_sidebar(d)),
         ], grow=True)
     else:
         body = Canvas(_draw_menu(d), grow=True)
@@ -392,9 +393,14 @@ def _draw_grid(d):
     seconds = int(d.get("seconds", 0))
     sel_num = int(d.get("sel_num", 0))
 
-    cell = min(sdk.canvas_width / 9, sdk.canvas_height / 9)
-    ox = (sdk.canvas_width - cell * 9) / 2
-    oy = (sdk.canvas_height - cell * 9) / 2
+    # sdk.canvas_width/height reflect full pane size, not HStack allocation.
+    # Use canvas_width minus sidebar for horizontal sizing, and a fixed
+    # top margin for vertical so the grid never overflows its allocation.
+    grid_w = sdk.canvas_width - SIDEBAR_W - 8
+    TOP_PAD = 24.0
+    cell = min((grid_w - 24) / 9, (sdk.canvas_height * 0.75 - TOP_PAD) / 9)
+    ox = (grid_w - cell * 9) / 2
+    oy = TOP_PAD
     gw = cell * 9
     gh = cell * 9
     cmds = []
